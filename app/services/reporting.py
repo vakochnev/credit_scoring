@@ -7,13 +7,9 @@ from pathlib import Path
 
 from shared.config import IMAGES_DIR, REPORTS_DIR
 
-# Путь к папке отчётов и изображений
-IMAGES_DIR.mkdir(exist_ok=True)
-REPORTS_DIR.mkdir(exist_ok=True)
 
 def generate_explanation_pdf(data: dict, explanation: dict, filename="reports/explanation_report.pdf"):
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    # Сохраняем путь к изображению как относительный от base_url
+
     image_path = "images/shap_waterfall.png"
 
     html_template = """
@@ -103,7 +99,7 @@ def generate_explanation_pdf(data: dict, explanation: dict, filename="reports/ex
         now=datetime.now().strftime("%d.%m.%Y %H:%M")
     )
 
-    # ✅ Указываем base_url — это корень проекта
+    # Указываем base_url — это корень проекта
     HTML(string=html_out, base_url=REPORTS_DIR.resolve()).write_pdf(target=filename)
     return filename
 
@@ -159,7 +155,6 @@ def generate_model_comparison_pdf(results, roc_auc_path, filename="reports/model
 
         <div class="chart">
             <h2>ROC-AUC кривые</h2>
-            <!-- ✅ Относительный путь: images/roc_auc.png -->
             <img src="{{ roc_auc_path }}" class="chart_img" alt="ROC-AUC Curve">
         </div>
 
@@ -175,6 +170,6 @@ def generate_model_comparison_pdf(results, roc_auc_path, filename="reports/model
         now=datetime.now().strftime("%d.%m.%Y %H:%M")
     )
 
-    # ✅ Указываем base_url = REPORTS_DIR (родительский каталог отчёта)
+    # Указываем base_url = REPORTS_DIR (родительский каталог отчёта)
     HTML(string=html_out, base_url=REPORTS_DIR.resolve()).write_pdf(target=filename)
     return filename

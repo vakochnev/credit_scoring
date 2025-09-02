@@ -3,7 +3,10 @@ from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
 from sklearn.ensemble import RandomForestClassifier
 import joblib
-from shared.config import ENSEMBLE_MODEL_PATH, FEATURE_NAMES_PATH, BACKGROUND_DATA_PATH
+
+from shared.config import (
+    ENSEMBLE_MODEL_PATH, FEATURE_NAMES_PATH, BACKGROUND_DATA_PATH
+)
 
 
 def train_ensemble_model(X, y):

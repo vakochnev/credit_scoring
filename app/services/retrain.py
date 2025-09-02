@@ -8,24 +8,25 @@ from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
 from sklearn.metrics import accuracy_score
 from shared.data_processing import preprocess_data_for_prediction
+
 from shared.config import (
-    DATA_DIR,
+    FEEDBACK_PATH,
     FEATURE_NAMES_PATH,
     BACKGROUND_DATA_PATH,
     ENSEMBLE_MODEL_PATH
 )
 
-FEEDBACK_FILE = DATA_DIR / "feedback.jsonl"
+
 
 def retrain_model_from_feedback():
     """
     Переобучает ансамбль с валидацией фидбэков.
     """
-    if not FEEDBACK_FILE.exists():
-        raise FileNotFoundError(f"Файл {FEEDBACK_FILE} не найден")
+    if not FEEDBACK_PATH.exists():
+        raise FileNotFoundError(f"Файл {FEEDBACK_PATH} не найден")
 
     # 1. Загрузка
-    lines = FEEDBACK_FILE.read_text(encoding="utf-8").strip().split("\n")
+    lines = FEEDBACK_PATH.read_text(encoding="utf-8").strip().split("\n")
     lines = [l for l in lines if l.strip()]
     if len(lines) == 0:
         raise ValueError("Файл feedback.jsonl пуст")

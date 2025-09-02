@@ -1,6 +1,6 @@
 # services/model_comparison.py
 import matplotlib.pyplot as plt
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 from sklearn.model_selection import train_test_split
 import joblib
 import os
@@ -60,7 +60,6 @@ def compare_models(X, y):
 def generate_roc_auc_plot(X_test, y_test, trained_models, filename='reports/images/roc_auc.png'):
 
     plt.figure(figsize=(10, 8))
-    from sklearn.metrics import roc_curve, roc_auc_score
 
     for name, model in trained_models.items():
         if hasattr(model, "predict_proba"):

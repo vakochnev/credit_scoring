@@ -1,9 +1,4 @@
 from sklearn.model_selection import train_test_split
-
-from app.services.utils import explain_prediction, predict_loan_status
-from services.model_comparison import compare_models #, generate_comparison_plot
-from services.reporting import generate_model_comparison_pdf
-
 import json
 import logging
 from pathlib import Path
@@ -11,18 +6,16 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+
 from shared.auth import verify_credentials
-from shared.data_processing import (
-    preprocess_data
-)
-from services.model_training import (
-    train_ensemble_model
-)
-from services.utils import explain_prediction
-from services.reporting import generate_explanation_pdf
+from shared.data_processing import preprocess_data
 from shared.config import DATA_SOURCE, HOST, PORT
+from shared.models import LoanRequest, FeedbackRequest
+from services.model_training import train_ensemble_model
+from services.reporting import generate_explanation_pdf
 from app.services.retrain import retrain_model_from_feedback
-from shared.models import LoanRequest, FeedbackRequest  # ✅ Импортируем обе модели
+from app.services.utils import explain_prediction, predict_loan_status
+
 
 
 # Настройка логгирования

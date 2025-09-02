@@ -6,12 +6,17 @@ import shap
 import matplotlib.pyplot as plt
 import base64
 from io import BytesIO
+
 from shared.data_processing import preprocess_data_for_prediction
-from shared.config import ENSEMBLE_MODEL_PATH, FEATURE_NAMES_PATH, BACKGROUND_DATA_PATH
+from shared.config import (
+    ENSEMBLE_MODEL_PATH, FEATURE_NAMES_PATH, BACKGROUND_DATA_PATH
+)
+
 
 _model = None
 _feature_names = None
 _background_data = None
+
 
 def _load_model():
     global _model, _feature_names, _background_data
