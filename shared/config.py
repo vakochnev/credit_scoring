@@ -4,6 +4,7 @@ ROOT_DIR = Path(__file__).parent.parent
 MODELS_DIR = ROOT_DIR / "models"
 DATA_DIR = ROOT_DIR / "data"
 REPORTS_DIR = ROOT_DIR / "reports"
+IMAGES_DIR = ROOT_DIR / "reports/images"
 
 FEATURE_NAMES_PATH = MODELS_DIR / "feature_names.pkl"
 BACKGROUND_DATA_PATH = MODELS_DIR / "background_data.pkl"

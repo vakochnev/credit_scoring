@@ -42,17 +42,17 @@ def explain_prediction(input_data) -> dict:
     input_processed = preprocess_data_for_prediction(input_df)
     input_processed = input_processed[feature_names]
 
-    # ✅ Создаём callable-обёртку для VotingClassifier
+    # Создаём callable-обёртку для VotingClassifier
     def model_predict_proba(X):
         # X может быть numpy array или DataFrame
         if isinstance(X, np.ndarray):
             X = pd.DataFrame(X, columns=feature_names)
         return model.predict_proba(X)
 
-    # ✅ Передаём обёртку в Explainer
+    # Передаём обёртку в Explainer
     explainer = shap.Explainer(model_predict_proba, background_data)
 
-    # ✅ Получаем SHAP значения
+    # Получаем SHAP значения
     shap_values = explainer(input_processed)
 
     # Для бинарной классификации: используем значения для класса "дефолт" (1)
@@ -74,7 +74,7 @@ def explain_prediction(input_data) -> dict:
         reverse=True
     )[:5]
 
-    # 🔽 Генерация графика SHAP
+    # Генерация графика SHAP
     fig, ax = plt.subplots(figsize=(8, 6))
     try:
         shap.waterfall_plot(
@@ -97,7 +97,7 @@ def explain_prediction(input_data) -> dict:
     buf.seek(0)
     image_base64 = base64.b64encode(buf.read()).decode('utf-8')
 
-    # 🔽 Сохраняем в файл
+    # Сохраняем в файл
     images_dir = Path("reports/images")
     images_dir.mkdir(exist_ok=True)
     img_path = images_dir / "shap_waterfall.png"

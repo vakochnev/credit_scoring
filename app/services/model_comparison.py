@@ -1,29 +1,42 @@
 # services/model_comparison.py
-from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
 import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
+from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.model_selection import train_test_split
 import joblib
+import os
 from pathlib import Path
 
-def compare_models(X_train, X_test, y_train, y_test):
+from shared.config import IMAGES_DIR, REPORTS_DIR
+
+
+def compare_models(X, y):
+    """
+    Обучает и сравнивает несколько моделей.
+    Возвращает результаты и обученные модели.
+    """
     from sklearn.ensemble import RandomForestClassifier
     from xgboost import XGBClassifier
     from catboost import CatBoostClassifier
+    from lightgbm import LGBMClassifier
     from sklearn.ensemble import VotingClassifier
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     models = {
         "RandomForest": RandomForestClassifier(n_estimators=100, random_state=42),
         "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42),
+        "LightGBM": LGBMClassifier(random_state=42),
         "CatBoost": CatBoostClassifier(silent=True, random_state=42),
         "Ensemble": VotingClassifier([
-            ('rf', RandomForestClassifier(n_estimators=50)),
-            ('xgb', XGBClassifier(use_label_encoder=False, eval_metric='logloss')),
-            ('cb', CatBoostClassifier(silent=True))
+            ('rf', RandomForestClassifier(n_estimators=50, random_state=42)),
+            ('xgb', XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)),
+            ('lgb', LGBMClassifier(random_state=42))
         ], voting='soft')
     }
 
     results = []
+    trained_models = {}
+
     for name, model in models.items():
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
@@ -34,28 +47,38 @@ def compare_models(X_train, X_test, y_train, y_test):
             "accuracy": acc,
             "auc": auc
         })
+        trained_models[name] = model
 
-    return results
+    return {
+        "results": results,
+        "X_test": X_test,
+        "y_test": y_test,
+        "trained_models": trained_models
+    }
 
 
-def generate_comparison_plot(results, filename="reports/model_comparison.png"):
-    df = pd.DataFrame(results)
-    fig, ax = plt.subplots(figsize=(10, 6))
-    x = np.arange(len(df))
-    width = 0.35
+def generate_roc_auc_plot(X_test, y_test, trained_models, filename='reports/images/roc_auc.png'):
 
-    ax.bar(x - width/2, df['accuracy'], width, label='Accuracy', color='skyblue')
-    ax.bar(x + width/2, df['auc'], width, label='AUC-ROC', color='lightcoral')
+    plt.figure(figsize=(10, 8))
+    from sklearn.metrics import roc_curve, roc_auc_score
 
-    ax.set_ylabel('Метрика')
-    ax.set_title('Сравнение моделей')
-    ax.set_xticks(x)
-    ax.set_xticklabels(df['model'])
-    ax.legend()
+    for name, model in trained_models.items():
+        if hasattr(model, "predict_proba"):
+            y_score = model.predict_proba(X_test)[:, 1]
+        else:
+            y_score = model.decision_function(X_test)
+        fpr, tpr, _ = roc_curve(y_test, y_score)
+        auc = roc_auc_score(y_test, y_score)
+        plt.plot(fpr, tpr, lw=2, label=f'{name} (AUC = {auc:.2f})')
 
-    plt.xticks(rotation=0)
-    plt.tight_layout()
-    plt.savefig(filename, dpi=150)
+    plt.plot([0, 1], [0, 1], 'k--', lw=2, label='Случайный классификатор')
+    plt.xlabel('FPR')
+    plt.ylabel('TPR')
+    plt.title('ROC-кривые')
+    plt.legend()
+    plt.grid(True)
+
+    plt.savefig(filename, bbox_inches='tight', dpi=150)
     plt.close()
 
-    return filename
+    return os.path.abspath(filename) # Вернуть полный путь к файлу

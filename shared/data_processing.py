@@ -4,6 +4,7 @@ import joblib
 
 from shared.config import DATA_DIR
 
+
 CATEGORIES = {
     'person_home_ownership': ['MORTGAGE', 'OTHER', 'OWN', 'RENT'],
     'loan_intent': ['DEBTCONSOLIDATION', 'EDUCATION', 'HOMEIMPROVEMENT', 'MEDICAL', 'PERSONAL', 'VENTURE'],
@@ -11,10 +12,12 @@ CATEGORIES = {
     'cb_person_default_on_file': ['N', 'Y']
 }
 
+
 def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df['loan_to_income_ratio'] = df['loan_amnt'] / df['person_income']
     return df
+
 
 def preprocess_data_for_prediction(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -31,6 +34,7 @@ def preprocess_data_for_prediction(df: pd.DataFrame) -> pd.DataFrame:
                 df[col] = 0
         df = df[expected_features]
     return df
+
 
 def preprocess_data(df: pd.DataFrame) -> (pd.DataFrame, pd.Series):
     df = df.copy()
