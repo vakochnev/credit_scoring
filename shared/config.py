@@ -10,7 +10,7 @@ FEATURE_NAMES_PATH = MODELS_DIR / "feature_names.pkl"
 BACKGROUND_DATA_PATH = MODELS_DIR / "background_data.pkl"
 ENSEMBLE_MODEL_PATH = MODELS_DIR / "ensemble_model.pkl"
 REPORT_PATH = REPORTS_DIR / "explanation_report.pdf"
-FEEDBACK_PATH = DATA_DIR / "feedback.json"
+FEEDBACK_PATH = DATA_DIR / "feedback.jsonl"
 
 DATA_SOURCE = DATA_DIR / "credit_risk_dataset.csv"
 
