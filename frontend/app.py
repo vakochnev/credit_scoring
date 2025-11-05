@@ -27,14 +27,6 @@ import streamlit as st
 import requests
 import pandas as pd
 import joblib
-import bcrypt
-from sqlalchemy.orm import Session
-
-# Импорты
-from shared.config import API_BASE_URL, REPORT_PATH, BACKGROUND_DATA_PATH
-from shared.models import LoanRequest
-from shared.models import User
-
 
 # --- 🧭 Настройка пути к корню проекта ---
 # Добавляет корень проекта в sys.path, чтобы можно было импортировать модули
@@ -47,12 +39,9 @@ if str(root_dir) not in sys.path:
 
 
 # --- 🔗 Импорт компонентов системы ---
-from shared.data_processing import preprocess_data_for_prediction
 from shared.config import (
     API_BASE_URL, REPORT_PATH, BACKGROUND_DATA_PATH, ENSEMBLE_MODEL_PATH
 )
-from shared.database import engine
-from shared.models import LoanRequest
 
 
 # --- 🖼️ Настройка страницы Streamlit ---
@@ -66,26 +55,14 @@ st.set_page_config(
     page_icon="💳"
 )
 
-# --- Подключение к БД ---
-def get_db():
-    db = Session(bind=engine)
-    try:
-        yield db
-    finally:
-        db.close()
 
-
-def get_db_session():
-    return Session(bind=engine)
-
-
-# --- 🔐 Механизм авторизации ---
+# --- 🔐 Механизм авторизации с JWT ---
 def check_password():
     """
-    Реализует простую форму входа с проверкой логина и пароля.
+    Реализует форму входа с получением JWT токена.
 
-    Использует st.session_state для хранения статуса аутентификации.
-    При успешном входе перезагружает страницу.
+    Использует st.session_state для хранения статуса аутентификации и токена.
+    При успешном входе получает JWT токен через /login и сохраняет его.
 
     Returns:
         bool: True — пользователь авторизован, False — нет
@@ -99,24 +76,71 @@ def check_password():
         username = st.text_input("Логин")
         password = st.text_input("Пароль", type="password")
         if st.button("Войти"):
-            # Проверяем через API
+            # Получаем JWT токен через /login
             try:
-                response = requests.get(
-                    f"{API_BASE_URL}/",
-                    auth=(username, password)
+                response = requests.post(
+                    f"{API_BASE_URL}/login",
+                    json={"username": username, "password": password}
                 )
                 if response.status_code == 200:
+                    token_data = response.json()
                     st.session_state.authenticated = True
                     st.session_state.username = username
-                    st.session_state.password = password
+                    st.session_state.access_token = token_data["access_token"]
+                    st.session_state.refresh_token = token_data["refresh_token"]
                     st.rerun()
                 else:
-                    st.error("Неверный логин или пароль")
+                    error_detail = response.json().get("detail", "Неизвестная ошибка")
+                    st.error(f"Неверный логин или пароль: {error_detail}")
             except Exception as e:
                 st.error("Не удалось подключиться к API")
                 st.exception(e)
         return False
     return True
+
+
+def get_auth_headers():
+    """
+    Возвращает заголовки с JWT токеном для авторизации.
+
+    Returns:
+        dict: Заголовки с Authorization Bearer токеном
+    """
+    if "access_token" in st.session_state:
+        return {"Authorization": f"Bearer {st.session_state.access_token}"}
+    return {}
+
+
+def refresh_access_token():
+    """
+    Обновляет access токен используя refresh токен.
+
+    Returns:
+        bool: True если токен успешно обновлён, False иначе
+    """
+    if "refresh_token" not in st.session_state:
+        return False
+    
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/refresh",
+            json={"refresh_token": st.session_state.refresh_token}
+        )
+        if response.status_code == 200:
+            token_data = response.json()
+            st.session_state.access_token = token_data["access_token"]
+            st.session_state.refresh_token = token_data["refresh_token"]
+            return True
+    except Exception:
+        pass
+    
+    # Если обновление не удалось, требуется повторный вход
+    st.session_state.authenticated = False
+    if "access_token" in st.session_state:
+        del st.session_state.access_token
+    if "refresh_token" in st.session_state:
+        del st.session_state.refresh_token
+    return False
 
 # Проверка перед отображением интерфейса
 if not check_password():
@@ -135,11 +159,20 @@ def explain_request(data):
     Returns:
         requests.Response: Ответ от FastAPI
     """
-    return requests.post(
+    response = requests.post(
         url=f"{API_BASE_URL}/explain",
         json=data,
-        auth=(st.session_state.username, st.session_state.password)
+        headers=get_auth_headers()
     )
+    # Если получили 401, пытаемся обновить токен
+    if response.status_code == 401:
+        if refresh_access_token():
+            response = requests.post(
+                url=f"{API_BASE_URL}/explain",
+                json=data,
+                headers=get_auth_headers()
+            )
+    return response
 
 
 def generate_report(data):
@@ -152,18 +185,35 @@ def generate_report(data):
     Returns:
         requests.Response: Ответ с путём к PDF
     """
-    return requests.post(
+    response = requests.post(
         url=f"{API_BASE_URL}/report",
         json=data,
-        auth=(st.session_state.username, st.session_state.password)
+        headers=get_auth_headers()
     )
+    if response.status_code == 401:
+        if refresh_access_token():
+            response = requests.post(
+                url=f"{API_BASE_URL}/report",
+                json=data,
+                headers=get_auth_headers()
+            )
+    return response
+
 
 def save_feedback(feedback_data):
-    return requests.post(
+    response = requests.post(
         url=f"{API_BASE_URL}/feedback",
         json=feedback_data,
-        auth=(st.session_state.username, st.session_state.password)
+        headers=get_auth_headers()
     )
+    if response.status_code == 401:
+        if refresh_access_token():
+            response = requests.post(
+                url=f"{API_BASE_URL}/feedback",
+                json=feedback_data,
+                headers=get_auth_headers()
+            )
+    return response
 
 
 def compare_models():
@@ -173,10 +223,17 @@ def compare_models():
     Returns:
         requests.Response: Список моделей и их метрик
     """
-    return requests.get(
+    response = requests.get(
         url=f"{API_BASE_URL}/compare",
-        auth=(st.session_state.username, st.session_state.password)
+        headers=get_auth_headers()
     )
+    if response.status_code == 401:
+        if refresh_access_token():
+            response = requests.get(
+                url=f"{API_BASE_URL}/compare",
+                headers=get_auth_headers()
+            )
+    return response
 
 
 def generate_comparison_report():
@@ -186,24 +243,45 @@ def generate_comparison_report():
     Returns:
         requests.Response: Путь к PDF
     """
-    return requests.post(
+    response = requests.post(
         url=f"{API_BASE_URL}/generate-comparison-report",
-        auth=(st.session_state.username, st.session_state.password)
+        headers=get_auth_headers()
     )
+    if response.status_code == 401:
+        if refresh_access_token():
+            response = requests.post(
+                url=f"{API_BASE_URL}/generate-comparison-report",
+                headers=get_auth_headers()
+            )
+    return response
 
 
 def retrain_model():
-    return requests.post(
+    response = requests.post(
         url=f"{API_BASE_URL}/retrain",
-        auth=(st.session_state.username, st.session_state.password)
+        headers=get_auth_headers()
     )
+    if response.status_code == 401:
+        if refresh_access_token():
+            response = requests.post(
+                url=f"{API_BASE_URL}/retrain",
+                headers=get_auth_headers()
+            )
+    return response
 
 
 def train_ensemble():
-    return requests.post(
+    response = requests.post(
         url=f"{API_BASE_URL}/train-final",
-        auth=(st.session_state.username, st.session_state.password)
+        headers=get_auth_headers()
     )
+    if response.status_code == 401:
+        if refresh_access_token():
+            response = requests.post(
+                url=f"{API_BASE_URL}/train-final",
+                headers=get_auth_headers()
+            )
+    return response
 
 
 # --- 🧠 Загрузка background_data для SHAP ---
@@ -292,7 +370,7 @@ with tab1:
     }
 
     # --- 🔮 Прогноз и объяснение ---
-    if st.button("🔮 Прогнозировать и объяснить"):
+    if st.button("🔮 Прогнозировать и объяснить", key="predict_button"):
         with st.spinner("Выполняется анализ..."):
             try:
                 response = explain_request(data)
@@ -343,7 +421,7 @@ with tab1:
     # --- 📄 Генерация PDF-отчёта ---
     st.subheader("📄 Скачать PDF-отчёт")
     if 'prediction_result' in st.session_state:
-        if st.button("📥 Сформировать PDF"):
+        if st.button("📥 Сформировать PDF", key="generate_pdf_button"):
             with st.spinner("Генерация PDF..."):
                 try:
                     input_data = st.session_state['input_data']
@@ -387,13 +465,15 @@ with tab1:
             format_func=lambda x: x[0]
         )
 
-        if st.button("✅ Сохранить обратную связь"):
+        if st.button("✅ Сохранить обратную связь", key="save_feedback_button"):
             result = st.session_state['prediction_result']
             input_data = st.session_state['input_data']
 
             feedback_data = input_data.copy()
             feedback_data["predicted_status"] = result["prediction"]
             feedback_data["actual_status"] = actual_status[1] if isinstance(actual_status, tuple) else actual_status
+            feedback_data["probability_repaid"] = result.get("probability_repaid")
+            feedback_data["probability_default"] = result.get("probability_default")
 
             try:
                 response = save_feedback(feedback_data)
@@ -418,7 +498,7 @@ with tab1:
 with tab2:
     st.subheader("Сравнение моделей")
 
-    if st.button("🔄 Обновить сравнение"):
+    if st.button("🔄 Обновить сравнение", key="compare_models_button"):
         with st.spinner("Загрузка метрик..."):
             try:
                 response = compare_models()
@@ -448,7 +528,7 @@ with tab2:
     st.markdown("---")
     st.subheader("📄 Отчёт по сравнению моделей")
 
-    if st.button("📥 Сформировать PDF-отчёт по моделям"):
+    if st.button("📥 Сформировать PDF-отчёт по моделям", key="generate_comparison_report_button"):
         with st.spinner("Генерация отчёта..."):
             try:
                 response = generate_comparison_report()
@@ -478,10 +558,9 @@ with tab3:
     st.subheader("🔄 Дообучение модели на обратной связи")
 
     # Обучение ансамбля
-    if st.button("🎓 Обучить ансамбль"):
+    if st.button("🎓 Обучить ансамбль", key="train_ensemble_button"):
         with st.spinner("Обучение..."):
             try:
-
                 response = train_ensemble()
                 if response.status_code == 200:
                     result = response.json()
@@ -490,13 +569,19 @@ with tab3:
                         f"точность: {result['accuracy']:.3f}"
                     )
                 else:
-                    st.error("❌ Ошибка обучения")
+                    error_detail = response.json().get("detail", "Неизвестная ошибка")
+                    st.error(f"❌ Ошибка обучения: {error_detail}")
+                    if response.status_code == 403:
+                        st.warning("⚠️ Недостаточно прав. Требуется роль 'admin'.")
             except Exception as e:
                 st.error("⚠️ Не удалось обучить модель")
                 st.exception(e)
+    
+    # Добавляем разделитель между кнопками
+    st.markdown("---")
 
     # Дообучение
-    if st.button("🚀 Дообучить на фидбэках"):
+    if st.button("🚀 Дообучить на фидбэках", key="retrain_model_button"):
         with st.spinner("Дообучение..."):
             try:
                 response = retrain_model()
@@ -505,9 +590,10 @@ with tab3:
                     st.success("✅ Модель дообучена!")
                     st.json(result)
                 else:
-                    st.error(
-                        f"❌ Ошибка: {response.json().get('detail')}"
-                    )
+                    error_detail = response.json().get("detail", "Неизвестная ошибка")
+                    st.error(f"❌ Ошибка: {error_detail}")
+                    if response.status_code == 403:
+                        st.warning("⚠️ Недостаточно прав. Требуется роль 'admin' или 'analyst'.")
             except Exception as e:
                 st.error("⚠️ Не удалось дообучить")
                 st.exception(e)

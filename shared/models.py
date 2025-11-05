@@ -15,12 +15,10 @@
 Год: 2025
 """
 from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from pydantic import BaseModel
-from typing import Optional
+from sqlalchemy.orm import declarative_base
+from pydantic import BaseModel, ConfigDict
+from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel
-from typing import List, Optional
 
 
 Base = declarative_base()
@@ -88,27 +86,45 @@ class User(Base):
     ORM-модель пользователя для хранения учётных данных.
 
     Используется SQLAlchemy для работы с базой данных.
-    Предназначена для хранения логинов и хешей паролей.
+    Предназначена для хранения логинов, хешей паролей и ролей.
 
     Атрибуты:
         id (int): Первичный ключ
         username (str): Логин (уникальный)
         password_hash (str): Хеш пароля (не пароль в открытом виде!)
+        role (str): Роль пользователя (admin, analyst, user)
+        is_active (bool): Активен ли пользователь
+        created_at (DateTime): Дата создания
+        last_login (DateTime): Дата последнего входа
+
+    Роли:
+        - admin: полный доступ ко всем функциям
+        - analyst: доступ к прогнозированию, отчётам, просмотру фидбэков
+        - user: только базовый доступ к прогнозированию
 
     Пример:
-        user = User(username="admin", password_hash="sha256:...")
+        user = User(
+            username="admin",
+            password_hash="sha256:...",
+            role="admin",
+            is_active=True
+        )
 
     Примечания:
         - Таблица: "users"
         - Индекс на username для ускорения поиска
         - Не хранит пароли в открытом виде
-        - Может быть расширена для ролей (admin, analyst)
+        - Поддержка ролей для разграничения доступа
     """
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     password_hash = Column(String)
+    role = Column(String, default="user", nullable=False)  # admin, analyst, user
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
 
 
 # --- 🔹 ORM-модель: Feedback (для хранения в БД) ---
@@ -148,15 +164,19 @@ class FeedbackRequest(LoanRequest):
     """
     Модель для обратной связи о реальном статусе кредита.
 
-    Расширяет LoanRequest, добавляя два поля:
+    Расширяет LoanRequest, добавляя поля:
         - predicted_status: что предсказала модель
         - actual_status: что произошло на самом деле
+        - probability_repaid: вероятность возврата кредита
+        - probability_default: вероятность дефолта
 
     Используется в эндпоинте /feedback для дообучения модели.
 
     Attributes:
         predicted_status (int): Предсказание модели (0 — repaid, 1 — default)
         actual_status (int): Реальный статус (0 — repaid, 1 — default)
+        probability_repaid (float): Вероятность возврата кредита (0.0-1.0)
+        probability_default (float): Вероятность дефолта (0.0-1.0)
 
     Пример:
         >>> feedback = FeedbackRequest(
@@ -164,7 +184,9 @@ class FeedbackRequest(LoanRequest):
         ...     person_income=75000,
         ...     ...
         ...     predicted_status=0,
-        ...     actual_status=1
+        ...     actual_status=1,
+        ...     probability_repaid=0.92,
+        ...     probability_default=0.08
         ... )
 
     Логика:
@@ -174,7 +196,78 @@ class FeedbackRequest(LoanRequest):
     Примечания:
         - Целочисленные значения используются для совместимости с ML
         - repaid = 0, default = 1 — соответствует целевой переменной loan_status
-        - Может быть расширена для хранения даты, комментариев и т.д.
+        - Вероятности хранятся для анализа качества предсказаний
     """
     predicted_status: int  # 0 — repaid, 1 — default
     actual_status: int     # 0 — repaid, 1 — default
+    probability_repaid: Optional[float] = None  # Вероятность возврата
+    probability_default: Optional[float] = None  # Вероятность дефолта
+
+
+# --- 🔐 Pydantic-модели для авторизации ---
+class LoginRequest(BaseModel):
+    """
+    Модель для запроса логина.
+
+    Attributes:
+        username (str): Логин пользователя
+        password (str): Пароль пользователя
+    """
+    username: str
+    password: str
+
+
+class Token(BaseModel):
+    """
+    Модель JWT токена.
+
+    Attributes:
+        access_token (str): Access JWT токен
+        refresh_token (str): Refresh JWT токен
+        token_type (str): Тип токена (обычно "bearer")
+    """
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class TokenRefresh(BaseModel):
+    """
+    Модель для обновления токена.
+
+    Attributes:
+        refresh_token (str): Refresh JWT токен
+    """
+    refresh_token: str
+
+
+class TokenData(BaseModel):
+    """
+    Данные из JWT токена.
+
+    Attributes:
+        user_id (Optional[int]): ID пользователя
+        username (Optional[str]): Логин пользователя
+        role (Optional[str]): Роль пользователя
+    """
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+    role: Optional[str] = None
+
+
+class UserInfo(BaseModel):
+    """
+    Информация о пользователе для ответа API.
+
+    Attributes:
+        id (int): ID пользователя
+        username (str): Логин
+        role (str): Роль
+        is_active (bool): Активен ли пользователь
+    """
+    id: int
+    username: str
+    role: str
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)

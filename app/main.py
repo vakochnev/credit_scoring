@@ -22,28 +22,34 @@ Credit Scoring API — Основной модуль FastAPI
 import os.path
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from sqlalchemy.orm import Session
 
 # Импорт компонентов системы
 from shared.database import engine, Base, SessionLocal
-from shared.auth import verify_credentials
+from shared.auth import (
+    get_current_user, require_role, create_access_token,
+    create_refresh_token, verify_token, get_password_hash,
+    verify_password
+)
 from shared.data_processing import preprocess_data
 from shared.config import DATA_SOURCE, HOST, PORT
 from shared.models import (
-    LoanRequest, FeedbackRequest, FeedbackDB
+    LoanRequest, FeedbackRequest, FeedbackDB, User,
+    LoginRequest as AuthLoginRequest, Token, TokenRefresh, UserInfo
 )
-from services.model_comparison import (
+from app.services.model_comparison import (
     compare_models, generate_roc_auc_plot
 )
-from services.reporting import (
+from app.services.reporting import (
     generate_model_comparison_pdf, generate_explanation_pdf
 )
-from services.model_training import train_ensemble_model
+from app.services.model_training import train_ensemble_model
 from app.services.retrain import retrain_model_from_feedback
 from app.services.utils import explain_prediction, predict_loan_status
 
@@ -90,10 +96,9 @@ FastAPI — современный фреймворк для создания AP
 - Авторизацию
 """
 app = FastAPI(
-    dependencies=[Depends(verify_credentials)],
     description='API кредитного скоринга',
     title='Credit Scoring API',
-    version="1.0.0",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json"
@@ -139,10 +144,144 @@ def read_root():
     return {"message": "Добро пожаловать в Credit Scoring API"}
 
 
+# --- 🔐 Эндпоинты авторизации ---
+@app.post("/login", response_model=Token)
+def login(
+    login_data: AuthLoginRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Авторизация пользователя и выдача JWT токенов.
+
+    Args:
+        login_data (AuthLoginRequest): Логин и пароль
+        db: Сессия БД
+
+    Returns:
+        Token: Access и refresh токены
+
+    Raises:
+        HTTPException: Если логин или пароль неверны
+    """
+    user = db.query(User).filter(User.username == login_data.username).first()
+    
+    if not user or not verify_password(login_data.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный логин или пароль",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Пользователь деактивирован"
+        )
+    
+    # Обновление даты последнего входа
+    user.last_login = datetime.utcnow()
+    db.commit()
+    
+    # Создание токенов
+    access_token = create_access_token(
+        data={"sub": user.id, "username": user.username, "role": user.role}
+    )
+    refresh_token = create_refresh_token(
+        data={"sub": user.id, "username": user.username}
+    )
+    
+    logging.info(f"Пользователь {user.username} (роль: {user.role}) авторизован")
+    
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
+
+
+@app.post("/refresh", response_model=Token)
+def refresh_token_endpoint(
+    token_data: TokenRefresh,
+    db: Session = Depends(get_db)
+):
+    """
+    Обновление access токена используя refresh токен.
+
+    Args:
+        token_data (TokenRefresh): Refresh токен
+        db: Сессия БД
+
+    Returns:
+        Token: Новые access и refresh токены
+
+    Raises:
+        HTTPException: Если refresh токен невалиден
+    """
+    try:
+        payload = verify_token(token_data.refresh_token, "refresh")
+        user_id = payload.get("sub")
+        
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Невалидный токен"
+            )
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Пользователь не найден или деактивирован"
+            )
+        
+        # Создание новых токенов
+        access_token = create_access_token(
+            data={"sub": user.id, "username": user.username, "role": user.role}
+        )
+        refresh_token = create_refresh_token(
+            data={"sub": user.id, "username": user.username}
+        )
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Ошибка обновления токена: {str(e)}"
+        )
+
+
+@app.get("/me", response_model=UserInfo)
+def get_me(current_user: User = Depends(get_current_user)):
+    """
+    Получение информации о текущем пользователе.
+
+    Args:
+        current_user: Текущий пользователь из токена
+
+    Returns:
+        UserInfo: Информация о пользователе
+    """
+    return UserInfo(
+        id=current_user.id,
+        username=current_user.username,
+        role=current_user.role,
+        is_active=current_user.is_active
+    )
+
+
 @app.post(path="/train-final")
-def train_final_api():
+def train_final_api(
+    current_user: User = Depends(require_role(["admin"]))
+):
     """
     Обучает ансамблевую модель на основе текущих данных.
+    Требует роль: admin
 
     Этапы:
         1. Предобработка данных (OHE, feature engineering)
@@ -155,24 +294,34 @@ def train_final_api():
     X, y = preprocess_data(df.copy())
     result = train_ensemble_model(X, y)
     logging.info(
-        f"Ансамбль обучен. Точность: {result['accuracy']:.3f}"
+        f"Ансамбль обучен пользователем {current_user.username}. "
+        f"Точность: {result['accuracy']:.3f}"
     )
     return result
 
 
 @app.post(path="/predict")
-def predict_api(request: LoanRequest):
+def predict_api(
+    request: LoanRequest,
+    current_user: User = Depends(get_current_user)
+):
     """
     Выполняет прогноз статуса кредита.
+    Требует авторизацию: любая роль
 
     Args:
         request (LoanRequest): Данные заемщика
+        current_user: Текущий пользователь
 
     Returns:
         dict: Прогноз, вероятности, решение
     """
     input_df = pd.DataFrame([request.model_dump()])
     result = predict_loan_status(input_df)
+    logging.info(
+        f"Прогноз выполнен пользователем {current_user.username} "
+        f"(роль: {current_user.role})"
+    )
     return {
         "prediction": result["prediction"],
         "status": "repaid" if result["prediction"] == 0 else "default",
@@ -183,29 +332,41 @@ def predict_api(request: LoanRequest):
 
 
 @app.post(path="/explain")
-def explain_api(request: LoanRequest):
+def explain_api(
+    request: LoanRequest,
+    current_user: User = Depends(require_role(["analyst", "admin", "user"]))
+):
     """
     Генерирует объяснение решения с помощью SHAP.
+    Требует роль: analyst, admin, user
 
     Использует универсальный Explainer для ансамблевой модели.
 
     Args:
         request (LoanRequest): Данные заемщика
+        current_user: Текущий пользователь
 
     Returns:
         dict: Объяснение с SHAP-значениями и base_value
     """
     try:
         result = explain_prediction(request.model_dump())
+        logging.info(
+            f"Объяснение сгенерировано пользователем {current_user.username}"
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
 
 @app.post(path="/report")
-def generate_report(request: LoanRequest):
+def generate_report(
+    request: LoanRequest,
+    current_user: User = Depends(require_role(["analyst", "admin"]))
+):
     """
     Генерирует PDF-отчёт с полным объяснением решения.
+    Требует роль: analyst, admin
 
     Отчёт включает:
         - Данные заемщика
@@ -215,6 +376,7 @@ def generate_report(request: LoanRequest):
 
     Args:
         request (LoanRequest): Данные заемщика
+        current_user: Текущий пользователь
 
     Returns:
         dict: Путь к PDF-файлу
@@ -225,7 +387,10 @@ def generate_report(request: LoanRequest):
             request.model_dump(),
             result
         )
-        logging.info(f"PDF-отчёт сгенерирован: {pdf_path}")
+        logging.info(
+            f"PDF-отчёт сгенерирован пользователем {current_user.username}: "
+            f"{pdf_path}"
+        )
         return {"report_path": pdf_path}
     except Exception as e:
         raise HTTPException(
@@ -236,18 +401,20 @@ def generate_report(request: LoanRequest):
 
 @app.post(path='/feedback')
 def feedback_api(
-        request: FeedbackRequest,
-        db: SessionLocal = Depends(get_db)
+    request: FeedbackRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-#def feedback_api(request: FeedbackRequest):
     """
     Сохраняет обратную связь о реальном статусе кредита.
+    Требует авторизацию: любая роль
 
     Используется для последующего дообучения модели.
 
     Args:
-        request (FeedbackRequest):
-            Данные + predicted_status + actual_status
+        request (FeedbackRequest): Данные + predicted_status + actual_status
+        current_user: Текущий пользователь
+        db: Сессия БД
 
     Returns:
         dict: Статус сохранения
@@ -257,16 +424,27 @@ def feedback_api(
         db.add(feedback)
         db.commit()
         db.refresh(feedback)
+        logging.info(
+            f"Фидбэк сохранён пользователем {current_user.username} "
+            f"(ID: {feedback.id})"
+        )
         return {"status": "success", "id": feedback.id}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ошибка сохранения в БД: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка сохранения в БД: {str(e)}"
+        )
 
 
 @app.post(path="/retrain")
-def retrain_api(db: Session = Depends(get_db)):
+def retrain_api(
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+    db: Session = Depends(get_db)
+):
     """
     Дообучает модель на основе собранных фидбэков.
+    Требует роль: admin, analyst
 
     Процесс:
         1. Загрузка фидбэков
@@ -280,21 +458,37 @@ def retrain_api(db: Session = Depends(get_db)):
     try:
         result = retrain_model_from_feedback(db)
         logging.info(
-            f"Модель дообучена. Точность на фидбэках: "
-            f"{result['accuracy_on_feedback']:.3f}"
+            f"Модель дообучена пользователем {current_user.username}. "
+            f"Точность на фидбэках: {result['accuracy_on_feedback']:.3f}"
         )
         return result
-    except Exception as e:
+    except ValueError as e:
+        # Ошибки валидации данных (нет данных, недостаточно данных и т.д.)
+        error_msg = str(e)
+        if "Нет данных в таблице feedback" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Недостаточно данных для дообучения. Сначала соберите обратную связь (feedback) через эндпоинт /feedback."
+            )
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка валидации данных: {error_msg}"
+        )
+    except Exception as e:
+        logging.error(f"Ошибка при дообучении модели: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ошибка при дообучении: {str(e)}"
         )
 
 
 @app.get(path="/compare")
-def compare_models_api():
+def compare_models_api(
+    current_user: User = Depends(require_role(["analyst", "admin"]))
+):
     """
     Сравнивает производительность моделей.
+    Требует роль: analyst, admin
 
     Обучает несколько моделей (RF, XGBoost, CatBoost, Ensemble)
     и возвращает их точность.
@@ -304,13 +498,19 @@ def compare_models_api():
     """
     X, y = preprocess_data(df.copy())
     result = compare_models(X, y)
+    logging.info(
+        f"Сравнение моделей выполнено пользователем {current_user.username}"
+    )
     return {"models": result["results"]}
 
 
 @app.post(path="/generate-comparison-report")
-def generate_comparison_report():
+def generate_comparison_report(
+    current_user: User = Depends(require_role(["analyst", "admin"]))
+):
     """
     Генерирует PDF-отчёт с сравнением моделей.
+    Требует роль: analyst, admin
 
     Включает:
         - Таблицу метрик
@@ -336,7 +536,8 @@ def generate_comparison_report():
         )
 
         logging.info(
-            f"Отчёт сравнения моделей сгенерирован: {pdf_path}"
+            f"Отчёт сравнения моделей сгенерирован пользователем "
+            f"{current_user.username}: {pdf_path}"
         )
         return {"report_path": pdf_path}
 

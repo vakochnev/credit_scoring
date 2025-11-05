@@ -1,0 +1,61 @@
+# Dockerfile для backend (FastAPI)
+FROM python:3.10-slim
+
+# Установка системных зависимостей
+# Включая зависимости для WeasyPrint (PDF генерация)
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libc6-dev \
+    libffi-dev \
+    libssl-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    libpng-dev \
+    libfreetype6-dev \
+    curl \
+    # Зависимости для WeasyPrint
+    libcairo2 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libgobject-2.0-0 \
+    shared-mime-info \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создание рабочей директории
+WORKDIR /app
+
+# Копирование requirements.txt
+COPY requirements.txt .
+
+# Установка Python зависимостей
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Копирование кода приложения
+COPY . .
+
+# Создание директорий для данных
+RUN mkdir -p /app/data /app/models /app/reports /app/reports/images
+
+# Переменные окружения
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Открытие порта
+EXPOSE 8000
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/ || exit 1
+
+# Копирование entrypoint скрипта
+COPY docker-entrypoint-backend.sh /app/docker-entrypoint-backend.sh
+RUN chmod +x /app/docker-entrypoint-backend.sh
+
+# Команда запуска
+CMD ["/app/docker-entrypoint-backend.sh"]
+

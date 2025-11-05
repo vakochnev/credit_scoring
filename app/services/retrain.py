@@ -90,6 +90,7 @@ def retrain_model_from_feedback(db: Session):
         rows = result.scalars().all()
 
         if not rows:
+            logger.warning("Попытка дообучения при отсутствии данных в таблице feedback")
             raise ValueError("Нет данных в таблице feedback. Нечего дообучать.")
 
         df = pd.DataFrame([{
@@ -108,8 +109,11 @@ def retrain_model_from_feedback(db: Session):
         } for fb in rows])
 
         logger.info(f"Загружено {len(df)} фидбэков из базы данных")
+    except ValueError:
+        # ValueError уже содержит правильное сообщение (например, "Нет данных в таблице feedback")
+        raise
     except Exception as e:
-        logger.error(f"Ошибка при загрузке фидбэков из БД: {e}")
+        logger.error(f"Ошибка при загрузке фидбэков из БД: {e}", exc_info=True)
         raise ValueError(f"Не удалось загрузить данные из БД: {str(e)}")
 
     # --- 2. Валидация целевой переменной ---
