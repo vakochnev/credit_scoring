@@ -34,11 +34,16 @@ ROOT_DIR = Path(__file__).parent.parent
 - data/ — сырые и фидбэки
 - reports/ — PDF-отчёты
 - reports/images/ — графики для встраивания в PDF
+- logs/ — логи приложения (backend и frontend)
 """
 MODELS_DIR = ROOT_DIR / "models"
 DATA_DIR = ROOT_DIR / "data"
 REPORTS_DIR = ROOT_DIR / "reports"
 IMAGES_DIR = REPORTS_DIR / "images"  # Для хранения графиков (SHAP, ROC-AUC)
+
+# Директория для логов (настраивается через .env, по умолчанию logs/)
+LOGS_DIR_NAME = os.getenv("LOGS_DIR", "logs")
+LOGS_DIR = ROOT_DIR / LOGS_DIR_NAME
 
 
 # --- 📄 Пути к ключевым файлам ---
@@ -101,7 +106,7 @@ ROLES = {
 Автоматически создаём все необходимые папки при импорте модуля.
 Параметр exist_ok=True — не вызывает ошибку, если папка уже существует.
 """
-for path in [MODELS_DIR, DATA_DIR, REPORTS_DIR, IMAGES_DIR]:
+for path in [MODELS_DIR, DATA_DIR, REPORTS_DIR, IMAGES_DIR, LOGS_DIR]:
     path.mkdir(exist_ok=True)
 
 

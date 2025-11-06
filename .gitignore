@@ -30,6 +30,10 @@ reports/*.pdf
 reports/images/*.png
 models/*.pkl
 
+# Логи (директория logs/ полностью игнорируется)
+logs/
+*.log
+
 # Конфигурация
 .env
 .env.local

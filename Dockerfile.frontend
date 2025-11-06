@@ -1,15 +1,22 @@
 # Dockerfile для frontend (Streamlit)
+# Создает образ для Streamlit веб-интерфейса
+
+# Базовый образ: Python 3.10 slim
 FROM python:3.10-slim
 
-# Установка системных зависимостей
+# Установка системных зависимостей для компиляции Python пакетов
 RUN apt-get update && apt-get install -y \
+    # Компиляторы для сборки пакетов с C расширениями
     gcc \
     g++ \
     libc6-dev \
+    # Зависимости для криптографии
     libffi-dev \
     libssl-dev \
+    # Зависимости для XML/HTML парсинга
     libxml2-dev \
     libxslt1-dev \
+    # Зависимости для работы с изображениями
     libjpeg-dev \
     zlib1g-dev \
     libpng-dev \
@@ -19,7 +26,7 @@ RUN apt-get update && apt-get install -y \
 # Создание рабочей директории
 WORKDIR /app
 
-# Копирование requirements.txt
+# Копирование requirements.txt для кэширования слоя Docker
 COPY requirements.txt .
 
 # Установка Python зависимостей
@@ -30,25 +37,29 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # Переменные окружения
+# PYTHONUNBUFFERED=1 - отключение буферизации для логов
+# PYTHONDONTWRITEBYTECODE=1 - не создавать .pyc файлы
+# STREAMLIT_SERVER_PORT=8501 - порт Streamlit сервера
+# STREAMLIT_SERVER_ADDRESS=0.0.0.0 - слушать на всех интерфейсах
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     STREAMLIT_SERVER_PORT=8501 \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
-# Открытие порта
+# Открытие порта для Streamlit
 EXPOSE 8501
 
-# Healthcheck
+# Healthcheck для проверки работоспособности Streamlit
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
-# Копирование entrypoint скрипта
-COPY docker-entrypoint-frontend.sh /app/docker-entrypoint-frontend.sh
+# Копирование и настройка entrypoint скрипта
+COPY scripts/docker-entrypoint-frontend.sh /app/docker-entrypoint-frontend.sh
 RUN chmod +x /app/docker-entrypoint-frontend.sh
 
-# Установка curl для healthcheck
+# Установка curl для healthcheck (после установки зависимостей для оптимизации)
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-# Команда запуска
+# Команда запуска контейнера
 CMD ["/app/docker-entrypoint-frontend.sh"]
 

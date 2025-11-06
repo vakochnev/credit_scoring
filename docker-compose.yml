@@ -1,74 +1,116 @@
-version: '3.8'
+# Docker Compose конфигурация для Credit Scoring приложения
+# Определяет два сервиса: backend (FastAPI) и frontend (Streamlit)
+
+version: '3.8'  # Версия формата docker-compose
 
 services:
+  # Сервис 1: Backend (FastAPI API сервер)
   backend:
     build:
-      context: .
-      dockerfile: Dockerfile.backend
-    container_name: credit_scoring_backend
+      context: .  # Контекст сборки - корень проекта
+      dockerfile: Dockerfile.backend  # Dockerfile для backend
+    container_name: credit_scoring_backend  # Имя контейнера
+    
+    # Проброс портов: хост:контейнер
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"  # Порт 8000 (можно изменить через .env)
+    
+    # Монтирование томов для сохранения данных между перезапусками
     volumes:
-      # Монтируем данные для сохранения между перезапусками
-      - ./data:/app/data
-      - ./models:/app/models
-      - ./reports:/app/reports
-      - ./credit_scoring.db:/app/credit_scoring.db
-      - ./credit_scoring.log:/app/credit_scoring.log
+      - ./data:/app/data  # Данные (датасеты, фидбэки)
+      - ./models:/app/models  # Обученные модели ML
+      - ./reports:/app/reports  # Сгенерированные PDF отчёты
+      - ./logs:/app/logs  # Логи приложения
+      - ./credit_scoring.db:/app/credit_scoring.db  # База данных SQLite
+    
+    # Загрузка переменных окружения из .env файла
+    env_file:
+      - .env
+    
+    # Переменные окружения (переопределяют .env при необходимости)
     environment:
-      - PYTHONUNBUFFERED=1
+      - PYTHONUNBUFFERED=1  # Отключение буферизации Python для логов
+      # Переопределяем для Docker сети (frontend обращается к backend по имени)
       - API_BASE_URL=http://backend:8000
-      - HOST=0.0.0.0
-      - PORT=8000
-      # JWT настройки (можно переопределить через .env)
+      - HOST=0.0.0.0  # Слушать на всех интерфейсах (для Docker)
+      # Переменные из .env файла (с значениями по умолчанию)
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
-    entrypoint: ["/bin/bash", "docker-entrypoint-backend.sh"]
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - USE_JSON_LOGS=${USE_JSON_LOGS:-true}
+    
+    # Скрипт запуска контейнера
+    entrypoint: ["/bin/bash", "scripts/docker-entrypoint-backend.sh"]
+    
+    # Healthcheck для проверки работоспособности сервиса
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      interval: 30s  # Интервал проверки
+      timeout: 10s  # Таймаут проверки
+      retries: 3  # Количество попыток перед пометкой как unhealthy
+      start_period: 10s  # Период ожидания перед началом проверок
+    
+    # Подключение к сети
     networks:
       - credit_scoring_network
+    
+    # Политика перезапуска: всегда перезапускать, кроме ручной остановки
     restart: unless-stopped
 
+  # Сервис 2: Frontend (Streamlit веб-интерфейс)
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
     container_name: credit_scoring_frontend
+    
+    # Проброс порта Streamlit
     ports:
-      - "8501:8501"
+      - "${STREAMLIT_SERVER_PORT:-8501}:8501"
+    
+    # Монтирование томов (те же, что и у backend для доступа к данным)
     volumes:
       - ./data:/app/data
       - ./models:/app/models
       - ./reports:/app/reports
+      - ./logs:/app/logs
+    
+    env_file:
+      - .env
+    
     environment:
       - PYTHONUNBUFFERED=1
+      # Переопределяем для Docker сети (обращение к backend по имени сервиса)
       - API_BASE_URL=http://backend:8000
-      - STREAMLIT_SERVER_PORT=8501
-      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_PORT=${STREAMLIT_SERVER_PORT:-8501}
+      - STREAMLIT_SERVER_ADDRESS=${STREAMLIT_SERVER_ADDRESS:-0.0.0.0}
+    
+    # Зависимость: frontend запускается только после того, как backend станет healthy
     depends_on:
       backend:
         condition: service_healthy
-    entrypoint: ["/bin/bash", "docker-entrypoint-frontend.sh"]
+    
+    entrypoint: ["/bin/bash", "scripts/docker-entrypoint-frontend.sh"]
+    
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8501/_stcore/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    
     networks:
       - credit_scoring_network
+    
     restart: unless-stopped
 
+# Определение сетей для связи между контейнерами
 networks:
   credit_scoring_network:
-    driver: bridge
+    driver: bridge  # Мостовая сеть для связи контейнеров
 
+# Определение томов (не используются напрямую, но могут быть полезны для именованных томов)
 volumes:
   data:
     driver: local

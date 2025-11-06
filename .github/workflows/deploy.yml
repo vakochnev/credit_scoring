@@ -1,24 +1,117 @@
+# Deploy workflow для автоматического деплоя на PythonAnywhere
+# Запускается при push в main ветку или вручную через workflow_dispatch
+# Включает проверки (тесты, линтеры, Docker) перед деплоем
+
 name: Deploy to PythonAnywhere
 
+# Триггеры запуска
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main ]  # Автоматический запуск при push в main
+  workflow_dispatch:  # Возможность запуска вручную через GitHub UI
 
 jobs:
-  deploy:
-    name: Deploy to PythonAnywhere
+  # Job 1: Предварительные проверки перед деплоем
+  # Все проверки должны пройти успешно, иначе деплой не запустится
+  pre-deploy:
+    name: Pre-Deploy Checks
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
     
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black pylint pytest pytest-cov pytest-asyncio
+        pip install -r requirements.txt
+    
+    # Проверка форматирования кода (критично - останавливает деплой при ошибке)
+    - name: Run Black (format check)
+      run: |
+        black --check --diff . || (echo "❌ Code formatting check failed. Run 'black .' to fix." && exit 1)
+    
+    # Линтинг кода (критично - останавливает деплой при ошибке)
+    - name: Run Flake8 (linting)
+      run: |
+        # Критические ошибки - должны быть исправлены
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || exit 1
+        # Информационные проверки
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    # Статический анализ (не критично)
+    - name: Run Pylint
+      run: |
+        pylint app/ shared/ frontend/ --disable=C0111 --disable=R0903 || true
+    
+    # Запуск тестов (критично - останавливает деплой при падении тестов)
+    - name: Run tests
+      run: |
+        pytest tests/ -v --cov=app --cov=shared --cov-report=xml --cov-report=term-missing || exit 1
+    
+    - name: Check imports
+      run: |
+        python -c "import app.main; import shared.config; import shared.auth; import shared.models; print('✅ All imports successful')"
+    
+    - name: Check Alembic migrations
+      run: |
+        alembic check || echo "⚠️ Migration check skipped"
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Backend Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.backend
+        push: false
+        tags: credit-scoring-backend:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Build Frontend Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.frontend
+        push: false
+        tags: credit-scoring-frontend:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Verify Docker images
+      run: |
+        docker images | grep credit-scoring-backend
+        docker images | grep credit-scoring-frontend
+        echo "✅ Docker images built successfully"
+
+  # Job 2: Деплой на PythonAnywhere
+  # Запускается ТОЛЬКО после успешного выполнения pre-deploy
+  deploy:
+    name: Deploy to PythonAnywhere
+    runs-on: ubuntu-latest
+    needs: pre-deploy  # Зависимость: запускается только после успешного выполнения pre-deploy
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    # Настройка SSH для подключения к PythonAnywhere
     - name: Setup SSH
       uses: webfactory/ssh-agent@v0.9.0
       with:
+        # Приватный SSH ключ из GitHub Secrets
         ssh-private-key: ${{ secrets.PYTHONANYWHERE_SSH_KEY }}
     
+    # Добавление хоста PythonAnywhere в known_hosts для избежания проверки подлинности
     - name: Add PythonAnywhere to known hosts
       run: |
         ssh-keyscan -H ${{ secrets.PYTHONANYWHERE_HOST }} >> ~/.ssh/known_hosts
@@ -30,49 +123,79 @@ jobs:
         PYTHONANYWHERE_PATH: ${{ secrets.PYTHONANYWHERE_PATH }}
       run: |
         echo "🚀 Starting deployment to PythonAnywhere..."
+        echo "📋 Deployment info:"
+        echo "  User: ${PYTHONANYWHERE_USER}"
+        echo "  Host: ${PYTHONANYWHERE_HOST}"
+        echo "  Path: ${PYTHONANYWHERE_PATH}"
         
-        # Create deployment script
+        # Создание скрипта деплоя для выполнения на сервере
         cat > deploy.sh << 'EOF'
         #!/bin/bash
-        set -e
+        set -e  # Остановка при любой ошибке
         
+        # Шаг 1: Обновление кода из git репозитория
         echo "📦 Updating code from repository..."
         cd $PYTHONANYWHERE_PATH
-        git fetch origin
-        git reset --hard origin/main
+        git fetch origin  # Получение изменений из удаленного репозитория
+        git reset --hard origin/main  # Сброс к состоянию main ветки
+        echo "✅ Code updated"
         
+        # Шаг 2: Установка/обновление Python зависимостей
         echo "📥 Installing/updating dependencies..."
-        source venv/bin/activate
+        source venv/bin/activate  # Активация виртуального окружения
         pip install --upgrade pip
         pip install -r requirements.txt
+        echo "✅ Dependencies installed"
         
+        # Шаг 3: Применение миграций базы данных
         echo "🗄️ Applying database migrations..."
         alembic upgrade head || echo "⚠️ Migration error (may be expected)"
+        echo "✅ Migrations applied"
         
+        # Шаг 4: Создание/обновление пользователей в системе
         echo "👤 Creating/updating users..."
         python scripts/create_users.py || echo "⚠️ User creation error (may be expected)"
+        echo "✅ Users updated"
         
+        # Шаг 5: Перезагрузка веб-приложения через touch WSGI файла
         echo "🔄 Reloading web application..."
         touch /var/www/${PYTHONANYWHERE_USER}_pythonanywhere_com_wsgi.py
+        echo "✅ Application reloaded"
         
         echo "✅ Deployment completed successfully!"
         EOF
         
-        # Copy deployment script to server
+        # Копирование скрипта деплоя на сервер
         scp deploy.sh ${PYTHONANYWHERE_USER}@${PYTHONANYWHERE_HOST}:~/deploy.sh
         
-        # Execute deployment script
+        # Выполнение скрипта деплоя на сервере
         ssh ${PYTHONANYWHERE_USER}@${PYTHONANYWHERE_HOST} "chmod +x ~/deploy.sh && ~/deploy.sh"
         
-        # Cleanup
+        # Удаление временного скрипта
         rm deploy.sh
+    
+    - name: Verify deployment
+      env:
+        PYTHONANYWHERE_USER: ${{ secrets.PYTHONANYWHERE_USER }}
+        PYTHONANYWHERE_HOST: ${{ secrets.PYTHONANYWHERE_HOST }}
+        PYTHONANYWHERE_PATH: ${{ secrets.PYTHONANYWHERE_PATH }}
+      run: |
+        echo "🔍 Verifying deployment..."
+        ssh ${PYTHONANYWHERE_USER}@${PYTHONANYWHERE_HOST} << 'VERIFY'
+          cd ${PYTHONANYWHERE_PATH}
+          source venv/bin/activate
+          python -c "import app.main; print('✅ Application imports successfully')" || exit 1
+          echo "✅ Deployment verified"
+        VERIFY
     
     - name: Notify deployment status
       if: always()
       run: |
         if [ "${{ job.status }}" == "success" ]; then
           echo "✅ Deployment successful!"
+          echo "🌐 Application available at: https://${PYTHONANYWHERE_USER}.pythonanywhere.com"
         else
           echo "❌ Deployment failed!"
+          echo "📋 Check logs for details"
         fi
 

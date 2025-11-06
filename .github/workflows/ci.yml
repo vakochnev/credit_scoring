@@ -1,47 +1,65 @@
+# CI (Continuous Integration) workflow
+# Автоматически запускается при push в main/develop или создании Pull Request
+# Выполняет проверки качества кода, тесты и сборку Docker образов
+
 name: CI
 
+# Триггеры запуска workflow
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop ]  # Запуск при push в эти ветки
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop ]  # Запуск при создании PR в эти ветки
 
 jobs:
+  # Job 1: Проверка линтинга и форматирования кода
   lint:
     name: Lint and Format Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # Используем последний Ubuntu runner
     
     steps:
+    # Шаг 1: Получение кода из репозитория
     - name: Checkout code
       uses: actions/checkout@v4
     
+    # Шаг 2: Настройка Python окружения
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
-        cache: 'pip'
+        python-version: '3.10'  # Версия Python для проекта
+        cache: 'pip'  # Кэширование pip пакетов для ускорения
     
+    # Шаг 3: Установка зависимостей для линтинга и проекта
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        # Установка инструментов для проверки кода
         pip install flake8 black pylint mypy
+        # Установка зависимостей проекта
         pip install -r requirements.txt
     
+    # Шаг 4: Проверка форматирования кода с помощью Black
     - name: Run Black (format check)
       run: |
-        black --check --diff .
+        black --check --diff .  # Проверка без изменения файлов
     
+    # Шаг 5: Линтинг с помощью Flake8
     - name: Run Flake8 (linting)
       run: |
+        # Критические ошибки (E9, F63, F7, F82) - должны быть исправлены
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Остальные проверки (сложность, длина строк) - информационные
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-      continue-on-error: true
+      continue-on-error: true  # Не останавливать workflow при ошибках
     
+    # Шаг 6: Статический анализ с помощью Pylint
     - name: Run Pylint
       run: |
+        # Отключаем проверки: C0111 (missing-docstring), R0903 (too-few-public-methods)
         pylint app/ shared/ frontend/ --disable=C0111 --disable=R0903 || true
-      continue-on-error: true
+      continue-on-error: true  # Не останавливать workflow при ошибках
 
+  # Job 2: Запуск unit тестов с измерением покрытия кода
   test:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -56,26 +74,36 @@ jobs:
         python-version: '3.10'
         cache: 'pip'
     
+    # Установка зависимостей для тестирования
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        # Установка pytest и плагинов для покрытия кода
         pip install pytest pytest-cov pytest-asyncio
+        # Установка зависимостей проекта
         pip install -r requirements.txt
     
+    # Запуск тестов с измерением покрытия кода
     - name: Run tests
       run: |
+        # -v: подробный вывод
+        # --cov=app --cov=shared: измерение покрытия для модулей app и shared
+        # --cov-report=xml: XML отчет для codecov
+        # --cov-report=html: HTML отчет для локального просмотра
         pytest tests/ -v --cov=app --cov=shared --cov-report=xml --cov-report=html || true
-      continue-on-error: true
+      continue-on-error: true  # Не останавливать workflow при падении тестов
     
+    # Загрузка отчета о покрытии кода в codecov
     - name: Upload coverage reports
       uses: codecov/codecov-action@v3
-      if: always()
+      if: always()  # Загружать даже если тесты упали
       with:
-        file: ./coverage.xml
-        flags: unittests
+        file: ./coverage.xml  # XML файл с данными о покрытии
+        flags: unittests  # Метка для группировки отчетов
         name: codecov-umbrella
-        fail_ci_if_error: false
+        fail_ci_if_error: false  # Не останавливать workflow при ошибке загрузки
 
+  # Job 3: Проверка сборки проекта и импортов
   build:
     name: Build Check
     runs-on: ubuntu-latest
@@ -95,11 +123,55 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
+    # Проверка успешности импорта основных модулей
     - name: Check imports
       run: |
         python -c "import app.main; import shared.config; import shared.auth; import shared.models; print('✅ All imports successful')"
     
+    # Проверка корректности миграций Alembic
     - name: Check Alembic migrations
       run: |
         alembic check || echo "⚠️ Migration check skipped"
+
+  # Job 4: Проверка сборки Docker образов
+  docker:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    # Настройка Docker Buildx для сборки образов
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    # Сборка Docker образа для backend (FastAPI)
+    - name: Build Backend Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .  # Контекст сборки - корень проекта
+        file: ./Dockerfile.backend  # Dockerfile для backend
+        push: false  # Не пушить в registry, только собрать
+        tags: credit-scoring-backend:test  # Тег для образа
+        cache-from: type=gha  # Использовать кэш из GitHub Actions
+        cache-to: type=gha,mode=max  # Сохранять кэш в GitHub Actions
+    
+    # Сборка Docker образа для frontend (Streamlit)
+    - name: Build Frontend Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.frontend  # Dockerfile для frontend
+        push: false
+        tags: credit-scoring-frontend:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    # Проверка успешности сборки образов
+    - name: Verify Docker images
+      run: |
+        docker images | grep credit-scoring-backend
+        docker images | grep credit-scoring-frontend
+        echo "✅ Docker images built successfully"
 

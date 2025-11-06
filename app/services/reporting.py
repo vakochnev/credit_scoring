@@ -336,5 +336,20 @@ def generate_model_comparison_pdf(
         base_url=REPORTS_DIR.resolve()
     ).write_pdf(target=filename)
 
+    # Получаем абсолютный путь
+    absolute_path = Path(filename).resolve()
+    
+    # Проверяем, что файл действительно создан
+    if not absolute_path.exists():
+        raise FileNotFoundError(
+            f"PDF файл не был создан по пути: {absolute_path}. "
+            f"REPORTS_DIR: {REPORTS_DIR}, filename: {filename}"
+        )
+    
+    logger.info(
+        f"PDF отчёт создан: {absolute_path}",
+        extra={"file_path": str(absolute_path), "file_size": absolute_path.stat().st_size}
+    )
+    
     # Возвращаем абсолютный путь
-    return str(Path(filename).resolve())
+    return str(absolute_path)
