@@ -1,4 +1,5 @@
 # 📊 Credit Scoring API — Дипломный проект
+# 📊 Credit Scoring API — Дипломный проект
 
 **Автор:** Кочнева Арина  
 **Год:** 2025  
@@ -162,8 +163,152 @@ streamlit run app.py
 
 #### Предварительные требования
 
-- Docker 20.10+
-- Docker Compose 1.29+
+- Docker 28.05.2
+- Docker Compose 2.40.3
+
+#### Установка Docker
+
+Если Docker не установлен, следуйте инструкциям ниже для вашей операционной системы.
+
+##### Linux (Ubuntu/Debian)
+
+```bash
+# Обновление списка пакетов
+sudo apt-get update
+
+# Установка зависимостей
+sudo apt-get install -y \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release
+
+# Добавление официального GPG ключа Docker
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+# Настройка репозитория
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Установка Docker Engine и Docker Compose
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Проверка установки
+docker --version
+docker compose version
+
+# Добавление текущего пользователя в группу docker (чтобы не использовать sudo)
+sudo usermod -aG docker $USER
+# После этого нужно перелогиниться или выполнить:
+newgrp docker
+```
+
+**Альтернативный способ (для Ubuntu/Debian):**
+```bash
+# Установка через официальный скрипт
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Добавление пользователя в группу docker
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+##### macOS
+
+**Способ 1: Docker Desktop (рекомендуется)**
+
+1. Скачайте Docker Desktop для Mac с официального сайта:
+   https://www.docker.com/products/docker-desktop/
+
+2. Установите Docker Desktop, следуя инструкциям установщика
+
+3. Запустите Docker Desktop из Applications
+
+4. Проверьте установку:
+```bash
+docker --version
+docker compose version
+```
+
+**Способ 2: Через Homebrew**
+```bash
+# Установка Docker Desktop через Homebrew
+brew install --cask docker
+
+# Запуск Docker Desktop
+open /Applications/Docker.app
+```
+
+##### Windows
+
+**Способ 1: Docker Desktop (рекомендуется)**
+
+1. Скачайте Docker Desktop для Windows с официального сайта:
+   https://www.docker.com/products/docker-desktop/
+
+2. Установите Docker Desktop, следуя инструкциям установщика
+
+3. Запустите Docker Desktop
+
+4. Проверьте установку в PowerShell или Command Prompt:
+```powershell
+docker --version
+docker compose version
+```
+
+**Требования для Windows:**
+- Windows 10 64-bit: Pro, Enterprise, or Education (Build 19041 или выше)
+- Windows 11 64-bit: Home или Pro версия 21H2 или выше
+- WSL 2 включен и обновлен
+- Виртуализация включена в BIOS
+
+**Включение WSL 2 (если не включен):**
+```powershell
+# В PowerShell от имени администратора
+wsl --install
+# Перезагрузите компьютер после установки
+```
+
+##### Проверка установки
+
+После установки Docker проверьте, что всё работает:
+
+```bash
+# Проверка версии Docker
+docker --version
+# Должно вывести: Docker version 20.10.x или выше
+
+# Проверка версии Docker Compose
+docker compose version
+# Должно вывести: Docker Compose version v2.x.x или выше
+
+# Тестовый запуск контейнера
+docker run hello-world
+# Должен вывести приветственное сообщение
+```
+
+##### Устранение проблем
+
+**Linux:**
+- Если команда `docker` требует `sudo`, добавьте пользователя в группу `docker`:
+  ```bash
+  sudo usermod -aG docker $USER
+  newgrp docker  # или перелогиньтесь
+  ```
+
+**macOS/Windows:**
+- Убедитесь, что Docker Desktop запущен
+- Проверьте, что виртуализация включена в настройках системы
+
+**Общие проблемы:**
+- Если Docker не запускается, проверьте логи: `docker info`
+- Для сброса настроек: `docker system prune -a` (осторожно: удалит все контейнеры и образы)
+
+---
 
 #### 1. Создание и настройка .env файла
 
